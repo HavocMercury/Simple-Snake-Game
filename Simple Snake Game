@@ -1,65 +1,249 @@
 import pygame
 import time
 import random
+import math  # Importing math for advanced calculations
+
+# --- Game Initialization ---
 pygame.init()
-# Game screen dimensions
-WIDTH, HEIGHT = 800, 600
-# Colors
+
+# --- Constants ---
+
+# Enhanced Screen Dimensions & Options
+WIDTH, HEIGHT = 1200, 800  # Larger play area
+FULLSCREEN = False # Toggle fullscreen mode with 'f'
+DISPLAY_MODE = (WIDTH, HEIGHT)
+
+# Color Palette (Expanded and more descriptive)
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
+LIGHT_GREY = (200, 200, 200)
+DARK_GREY = (50, 50, 50)
 RED = (213, 50, 80)
+DARK_RED = (150, 30, 50)
 GREEN = (0, 255, 0)
+DARK_GREEN = (0, 155, 0)
 BLUE = (50, 153, 213)
-# Snake and environment behaviour and sizes
+DARK_BLUE = (30, 100, 170)
+YELLOW = (255, 255, 0)
+ORANGE = (255, 165, 0)
+PURPLE = (128, 0, 128)
+PINK = (255, 192, 203)
+CYAN = (0, 255, 255)
+
+# Snake and Environment - Base Values
 BLOCK_SIZE = 20
-SNAKE_SPEED = 12
-# Initialize screen
-screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption('Snake Game')
-# Clock for controlling the snake's speed
+BASE_SNAKE_SPEED = 12
+SPEED_INCREMENT = 0.5 # How much speed increases with difficulty
+SNAKE_COLORS = [GREEN, DARK_GREEN, YELLOW, ORANGE, PURPLE, PINK, CYAN] # Different snake colors
+
+# --- Game Variables ---
+game_over = False
+game_close = False
+score = 0
+high_score = 0 # Add a high score
+powerup_active = False  # Track if a power-up is currently active
+powerup_timer = 0  # Timer for power-up duration
+paused = False # Game pause state
+
+
+# --- Screen Setup ---
+if FULLSCREEN:
+    screen = pygame.display.set_mode(DISPLAY_MODE, pygame.FULLSCREEN)
+else:
+    screen = pygame.display.set_mode(DISPLAY_MODE)
+
+pygame.display.set_caption('Snake Game - Enhanced')
+
+# --- Clock and Timing ---
 clock = pygame.time.Clock()
-# Font styles
-font_style = pygame.font.SysFont("bahnschrift", 25)
-score_font = pygame.font.SysFont("bold", 35)
-def our_snake(block_size, snake_list):
-    for x in snake_list:
-        pygame.draw.rect(screen, GREEN, [x[0], x[1], block_size, block_size])
-def your_score(score):
-    value = score_font.render("Your Score: " + str(score), True, WHITE)
-    screen.blit(value, [10, 10])
-def message(msg, color):
-    mesg = font_style.render(msg, True, color)
-    screen.blit(mesg, [WIDTH // 6, HEIGHT // 3])
+FPS = 60 # Desired frames per second
+
+# --- Fonts ---
+font_path = pygame.font.match_font("bahnschrift")  # Check for font existence
+if font_path is None:
+    font_path = pygame.font.get_default_font() # Fallback
+    print("Warning: 'bahnschrift' font not found. Using default font.")
+
+
+font_style = pygame.font.Font(font_path, 25)
+score_font = pygame.font.Font(font_path, 35)
+title_font = pygame.font.Font(font_path, 50)  # For game title/menus
+message_font = pygame.font.Font(font_path, 30)
+pause_font = pygame.font.Font(font_path, 70)
+high_score_font = pygame.font.Font(font_path, 30)
+
+
+# --- Sound Effects --- (Loading and playing sounds)
+try:
+    eat_sound = pygame.mixer.Sound("eat.wav")  # Replace with your sound files
+    game_over_sound = pygame.mixer.Sound("game_over.wav")
+    powerup_sound = pygame.mixer.Sound("powerup.wav") #sound for powerups
+    button_sound = pygame.mixer.Sound("button.wav") # Click sound
+    teleport_sound = pygame.mixer.Sound("teleport.wav")
+
+except FileNotFoundError as e:
+    print(f"Warning: Sound file not found: {e}.  Sounds will be disabled.")
+    eat_sound = None # Set to None if not available
+    game_over_sound = None
+    powerup_sound = None
+    button_sound = None
+    teleport_sound = None
+
+
+# --- Snake Functions ---
+def our_snake(block_size, snake_list, snake_color):
+    """Draws the snake with a gradient effect."""
+    for i, segment in enumerate(snake_list):
+        # Create a gradient effect (darker at the tail, lighter at the head)
+        gradient_color = (
+            max(0, snake_color[0] - i * 2),
+            max(0, snake_color[1] - i * 5),
+            max(0, snake_color[2] - i * 2)
+        )
+        pygame.draw.rect(screen, gradient_color, [segment[0], segment[1], block_size, block_size])
+
+        # Add a slight outline for better visibility
+        pygame.draw.rect(screen, BLACK, [segment[0], segment[1], block_size, block_size], 2)
+
+
+# --- Scoring and Display ---
+def your_score(score, high_score):
+    score_text = score_font.render("Score: " + str(score), True, WHITE)
+    high_score_text = high_score_font.render("High Score: " + str(high_score), True, WHITE)
+    screen.blit(score_text, [10, 10])
+    screen.blit(high_score_text, [10, 50]) # Display High Score
+
+
+def message(msg, color, y_offset=0, font=message_font):
+    """Displays a message on the screen."""
+    mesg = font.render(msg, True, color)
+    text_rect = mesg.get_rect(center=(WIDTH // 2, HEIGHT // 2 + y_offset))
+    screen.blit(mesg, text_rect)
+
+
+# --- Power-Up Class ---
+class PowerUp:
+    def __init__(self, type, color, effect_duration=10):
+        self.type = type
+        self.color = color
+        self.x = round(random.randrange(0, WIDTH - BLOCK_SIZE) / float(BLOCK_SIZE)) * float(BLOCK_SIZE)
+        self.y = round(random.randrange(0, HEIGHT - BLOCK_SIZE) / float(BLOCK_SIZE)) * float(BLOCK_SIZE)
+        self.effect_duration = effect_duration  # in seconds
+        self.active = False
+        self.spawn_time = 0
+
+
+    def draw(self):
+        """Draws the power-up on the screen."""
+        pygame.draw.rect(screen, self.color, [self.x, self.y, BLOCK_SIZE, BLOCK_SIZE])
+        # Add a symbol or letter to indicate the power-up type
+        symbol = ""
+        if self.type == "speed":
+            symbol = "S"
+        elif self.type == "score_multiplier":
+            symbol = "x2"
+        elif self.type == "invincible":
+            symbol = "I"
+        elif self.type == 'teleport':
+            symbol = 'T'
+        symbol_text = font_style.render(symbol, True, BLACK)
+        text_rect = symbol_text.get_rect(center=(self.x + BLOCK_SIZE // 2, self.y + BLOCK_SIZE // 2))
+        screen.blit(symbol_text, text_rect)
+
+
+    def activate(self):
+        """Activates the power-up's effect."""
+        self.active = True
+        self.spawn_time = time.time() # Record activation time
+        if powerup_sound:
+            powerup_sound.play()
+
+    def deactivate(self):
+        self.active = False
+
+    def is_expired(self):
+         return self.active and (time.time() - self.spawn_time > self.effect_duration)
+
+
+# --- Game Loop ---
 def gameLoop():
+    global game_over, game_close, score, high_score, powerup_active, powerup_timer, paused  # Access global variables
+
     game_over = False
     game_close = False
+    paused = False
+    score = 0 # Reset score
+    snake_speed = BASE_SNAKE_SPEED
+    score_multiplier = 1  # Default score multiplier
+    invincible = False  # Flag for invincibility power-up
 
-    # Starting position of the snake
+    # Initial Snake Position and Movement
     x1, y1 = WIDTH // 2, HEIGHT // 2
     x1_change, y1_change = 0, 0
 
-    # Snake body
+    # Snake Body and Length
     snake_list = []
     length_of_snake = 1
+    snake_color = random.choice(SNAKE_COLORS)
 
-    # Food position
-    foodx = round(random.randrange(0, WIDTH - BLOCK_SIZE) / 20.0) * 20.0
-    foody = round(random.randrange(0, HEIGHT - BLOCK_SIZE) / 20.0) * 20.0
+    # Food Position
+    foodx = round(random.randrange(0, WIDTH - BLOCK_SIZE) / float(BLOCK_SIZE)) * float(BLOCK_SIZE)
+    foody = round(random.randrange(0, HEIGHT - BLOCK_SIZE) / float(BLOCK_SIZE)) * float(BLOCK_SIZE)
 
+    # Power-up Initialization - Create instances of PowerUp
+    powerups = [
+        PowerUp("speed", YELLOW, effect_duration=7),
+        PowerUp("score_multiplier", BLUE, effect_duration=10),
+        PowerUp("invincible", WHITE, effect_duration=5),
+        PowerUp('teleport', CYAN, effect_duration=0)
+    ]
+    active_powerups = [] # List to manage active powerups
+
+
+    # --- Main Game Loop ---
     while not game_over:
 
-        while game_close:
-            screen.fill(BLACK)
-            message("WASTED! Press Q-Quit or C-Play Again!", RED)
-            your_score(length_of_snake - 1)
+        # --- Pause Handling ---
+        if paused:
+            message("Paused", WHITE, -50, pause_font)
+            message("Press SPACE to Resume", WHITE, 50)
             pygame.display.update()
             for event in pygame.event.get():
                 if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_SPACE:
+                        if button_sound:
+                            button_sound.play()
+                        paused = False
+                if event.type == pygame.QUIT:
+                    game_over = True # Allow quitting while paused
+            continue  # Skip the rest of the game loop while paused
+
+
+        # --- Game Over Screen ---
+        while game_close:
+            screen.fill(BLACK)
+            message("WASTED!", RED, -50, title_font)
+            message("Press Q-Quit or C-Play Again", WHITE, 50)
+            your_score(score, high_score)  # Display score on game over screen
+            pygame.display.update()
+
+            for event in pygame.event.get():
+                if event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_q:
+                        if button_sound:
+                            button_sound.play()
                         game_over = True
                         game_close = False
                     if event.key == pygame.K_c:
-                        gameLoop()
+                        if button_sound:
+                            button_sound.play()
+                        gameLoop()  # Restart the game
+                if event.type == pygame.QUIT:
+                    game_over = True
+                    game_close = False
+
+
+        # --- Event Handling ---
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 game_over = True
@@ -76,29 +260,124 @@ def gameLoop():
                 elif event.key == pygame.K_DOWN and y1_change == 0:
                     y1_change = BLOCK_SIZE
                     x1_change = 0
-        if x1 >= WIDTH or x1 < 0 or y1 >= HEIGHT or y1 < 0:
-            game_close = True
+                elif event.key == pygame.K_p:  # Pause key
+                    paused = not paused
+                elif event.key == pygame.K_f:
+                    global FULLSCREEN, DISPLAY_MODE, screen
+                    FULLSCREEN = not FULLSCREEN
+                    if FULLSCREEN:
+                        DISPLAY_MODE = (pygame.display.Info().current_w, pygame.display.Info().current_h)
+                        screen = pygame.display.set_mode(DISPLAY_MODE, pygame.FULLSCREEN)
+                    else:
+
+                        DISPLAY_MODE = (WIDTH, HEIGHT)
+                        screen = pygame.display.set_mode(DISPLAY_MODE)
+
+
+        # --- Boundary Collision ---
+        if not invincible:  # Only check for collisions if NOT invincible
+             if x1 >= WIDTH or x1 < 0 or y1 >= HEIGHT or y1 < 0:
+                if game_over_sound:
+                    game_over_sound.play()
+                game_close = True
+
+
+        # --- Snake Movement ---
         x1 += x1_change
         y1 += y1_change
-        screen.fill(BLACK)
-        pygame.draw.rect(screen, RED, [foodx, foody, BLOCK_SIZE, BLOCK_SIZE])
+
+        # --- Teleport Powerup Handling ---
+        if any(powerup.type == 'teleport' and powerup.active for powerup in active_powerups):
+            if x1 >= WIDTH:
+                x1 = 0
+            elif x1 < 0:
+                x1 = WIDTH - BLOCK_SIZE
+            if y1 >= HEIGHT:
+                y1 = 0
+            elif y1 < 0:
+                y1 = HEIGHT - BLOCK_SIZE
+
+        # --- Drawing ---
+        screen.fill(BLACK)  # Clear the screen
+
+        # Draw grid lines (optional, but helpful for visualizing movement)
+        if not FULLSCREEN:  # Only show grid when not fullscreen for performance
+            for x in range(0, WIDTH, BLOCK_SIZE):
+                pygame.draw.line(screen, DARK_GREY, (x, 0), (x, HEIGHT))
+            for y in range(0, HEIGHT, BLOCK_SIZE):
+                pygame.draw.line(screen, DARK_GREY, (0, y), (WIDTH, y))
+
+
+        pygame.draw.rect(screen, RED, [foodx, foody, BLOCK_SIZE, BLOCK_SIZE])  # Draw food
         snake_head = [x1, y1]
         snake_list.append(snake_head)
         if len(snake_list) > length_of_snake:
             del snake_list[0]
-        # Check for collision with itself
-        for block in snake_list[:-1]:
-            if block == snake_head:
-                game_close = True
-        our_snake(BLOCK_SIZE, snake_list)
-        your_score(length_of_snake - 1)
-        pygame.display.update()
-        # Checks if the snake eats the food
+
+        # --- Self Collision ---
+        if not invincible: # Check only if not invincible
+            for block in snake_list[:-1]:
+                if block == snake_head:
+                    if game_over_sound:
+                        game_over_sound.play()
+                    game_close = True
+
+        our_snake(BLOCK_SIZE, snake_list, snake_color)  # Draw the snake
+
+        # --- Power-up Spawning and Drawing ---
+        for powerup in powerups:
+            if not powerup.active:
+                # Randomly decide whether to spawn a power-up
+                if random.random() < 0.005: # 0.5% chance each frame. Adjust for desired frequency
+                    powerup.x = round(random.randrange(0, WIDTH - BLOCK_SIZE) / float(BLOCK_SIZE)) * float(BLOCK_SIZE)
+                    powerup.y = round(random.randrange(0, HEIGHT - BLOCK_SIZE) / float(BLOCK_SIZE)) * float(BLOCK_SIZE)
+                    powerup.draw()
+
+        #Check for powerup collisions
+        for powerup in powerups:
+            if x1 == powerup.x and y1 == powerup.y:
+                powerup.activate()
+                active_powerups.append(powerup)
+
+
+        # --- Power-up Effect Handling ---
+        for powerup in active_powerups:
+            if powerup.type == "speed":
+                snake_speed = BASE_SNAKE_SPEED * 2  # Double the speed
+
+            elif powerup.type == "score_multiplier":
+                score_multiplier = 2  # Double the score
+            elif powerup.type == "invincible":
+                invincible = True
+            elif powerup.type == 'teleport':
+                if teleport_sound:
+                    teleport_sound.play()
+                #Teleport handled in movement section
+
+            if powerup.is_expired():  # Check for expired powerups
+                if powerup.type == 'speed':
+                    snake_speed = BASE_SNAKE_SPEED
+                elif powerup.type == 'score_multiplier':
+                    score_multiplier = 1
+                elif powerup.type == 'invincible':
+                    invincible = False
+                powerup.deactivate()
+                active_powerups.remove(powerup) # Remove from active list
+                # Reset powerups array so powerups can spawn again
+                powerups = [
+                    PowerUp("speed", YELLOW, effect_duration=7),
+                    PowerUp("score_multiplier", BLUE, effect_duration=10),
+                    PowerUp("invincible", WHITE, effect_duration=5),
+                    PowerUp('teleport', CYAN, effect_duration=0)
+                          ]
+
+        for powerup in powerups:  # Draw the power-ups
+             if not powerup.active: #Only draw non-active powerups
+                powerup.draw()
+
+
+        # --- Food Consumption ---
         if x1 == foodx and y1 == foody:
-            foodx = round(random.randrange(0, WIDTH - BLOCK_SIZE) / 20.0) * 20.0
-            foody = round(random.randrange(0, HEIGHT - BLOCK_SIZE) / 20.0) * 20.0
-            length_of_snake += 1
-        clock.tick(SNAKE_SPEED)
-    pygame.quit()
-    quit()
-gameLoop()
+            if eat_sound:  # Check if sound loaded successfully
+                eat_sound.play()
+            foodx = round(random.randrange(0, WIDTH - BLOCK_SIZE) / float(BLOCK
